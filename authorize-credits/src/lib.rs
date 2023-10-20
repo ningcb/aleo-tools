@@ -204,3 +204,50 @@ fn authorize<N: Network>(
     // Return the authorization.
     Ok(authorization)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use snarkvm::prelude::store::helpers::memory::ConsensusMemory;
+    use snarkvm::prelude::{Testnet3, VM};
+    use snarkvm::ledger::store::ConsensusStore;
+    use snarkvm::utilities::TestRng;
+
+    type CurrentNetwork = Testnet3;
+
+
+    #[test]
+    fn test_authorize_public() {
+        // Initialize an RNG.
+        let rng = &mut TestRng::default();
+        // Initialize a VM.
+        let vm = VM::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>::from(
+            ConsensusStore::open(None).unwrap(),
+        ).unwrap();
+        // Initialize the genesis private key.
+        let genesis_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Create the genesis block.
+        let genesis_block = vm.genesis_beacon(&genesis_private_key, rng).unwrap();
+        // Add the genesis block to the VM.
+        vm.add_next_block(&genesis_block).unwrap();
+
+        // Initialize a private key for the sender.
+        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Initialize a private key for the recipient.
+        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
+
+        // Initialize an authorization.
+        let (authorization, fee_authorization) = transfer_public(
+            &sender_private_key.to_string(),
+            &recipient_address.to_string(),
+            100,
+            10,
+            rng,
+        ).unwrap();
+
+        // Execute the authorization.
+        assert!(vm.execute_authorization(authorization, fee_authorization, None, rng).is_ok());
+    }
+}
