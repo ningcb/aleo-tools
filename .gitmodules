@@ -1,0 +1,3 @@
+[submodule "slingshot"]
+	path = slingshot
+	url = https://github.com/d0cd/slingshot
