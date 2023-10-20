@@ -1,0 +1,16 @@
+[package]
+name = "authorize-credits"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.snarkvm]
+version = "0.16.1"
+
+[dependencies.anyhow]
+version = "1.0.72"
+
+[dependencies.rand]
+version = "0.8"
+
+
+
