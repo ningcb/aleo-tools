@@ -14,7 +14,7 @@ use core::str::FromStr;
 use rand::{CryptoRng, Rng};
 use snarkvm::circuit::prelude::IndexMap;
 
-/// Returns a transaction that transfers public credits from the sender to the recipient.
+/// Authorizes a public transfer.
 pub fn authorize_transfer_public<N: Network>(
     private_key: &str,
     recipient: &str,
@@ -90,7 +90,7 @@ pub fn authorize_transfer_public<N: Network>(
     Ok((authorization, fee_authorization))
 }
 
-/// Returns a transaction that authorizes a private to public transfer.
+/// Authorizes a private to public transfer.
 #[allow(clippy::too_many_arguments)]
 pub fn authorize_transfer_private_to_public<N: Network>(
     private_key: &PrivateKey<N>,
@@ -170,6 +170,7 @@ pub fn authorize_transfer_private_to_public<N: Network>(
             ],
         )),
     ];
+
     // Construct the output types.
     let output_types = vec![
         ValueType::from_str("credits.record")?,
@@ -183,8 +184,10 @@ pub fn authorize_transfer_private_to_public<N: Network>(
 
     // Construct the authorization.
     let authorization = authorize(request, outputs, output_types, output_registers)?;
+
     // Get the execution ID.
     let execution_id = authorization.to_execution_id()?;
+
     // Authorize the fee.
     let fee_authorization = match fee_in_microcredits.is_zero() {
         true => None,
@@ -325,7 +328,7 @@ mod test {
 
     use snarkvm::ledger::store::ConsensusStore;
     use snarkvm::prelude::store::helpers::memory::ConsensusMemory;
-    use snarkvm::prelude::{Testnet3, VM};
+    use snarkvm::prelude::{Testnet3, ViewKey, VM};
     use snarkvm::utilities::TestRng;
 
     type CurrentNetwork = Testnet3;
@@ -385,17 +388,32 @@ mod test {
         // Add the genesis block to the VM.
         vm.add_next_block(&genesis_block).unwrap();
 
-        // Initialize a private key for the sender.
-        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Get a valid record.
+        let (_, record) = genesis_block.records().next().unwrap();
+        let record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+
+        // Get the number of microcredits in the record and record nonce.
+        let record_microcredits = match record
+            .data()
+            .get(&Identifier::from_str("microcredits").unwrap())
+            .unwrap()
+        {
+            Entry::Private(Plaintext::Literal(Literal::U64(amount), _)) => amount,
+            _ => panic!("Invalid amount"),
+        };
+        let record_nonce = record.nonce();
+
         // Initialize a private key for the recipient.
         let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
         let recipient_address = Address::try_from(&recipient_private_key).unwrap();
 
         // Initialize an authorization.
         let (authorization, fee_authorization) = authorize_transfer_private_to_public(
-            &sender_private_key,
-            1000,
-            "nonce",
+            &genesis_private_key,
+            **record_microcredits,
+            &record_nonce.to_string(),
             &recipient_address.to_string(),
             100,
             10,
