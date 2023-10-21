@@ -20,6 +20,7 @@ pub fn authorize_transfer_public<N: Network>(
     recipient: &str,
     amount_in_microcredits: u64,
     fee_in_microcredits: u64,
+    priority_fee_in_microcredits: u64,
     rng: &mut (impl Rng + CryptoRng),
 ) -> Result<(Authorization<N>, Option<Authorization<N>>)> {
     // Initialize the private key.
@@ -79,7 +80,7 @@ pub fn authorize_transfer_public<N: Network>(
         false => Some(authorize_public_fee(
             &private_key,
             fee_in_microcredits,
-            0,
+            priority_fee_in_microcredits,
             execution_id,
             rng,
         )?),
@@ -90,15 +91,17 @@ pub fn authorize_transfer_public<N: Network>(
 }
 
 /// Returns a transaction that authorizes a private to public transfer.
-fn authorize_transfer_private_to_public<N: Network>(
+#[allow(clippy::too_many_arguments)]
+pub fn authorize_transfer_private_to_public<N: Network>(
     private_key: &PrivateKey<N>,
     record_microcredits: u64,
     record_nonce: &str,
     recipient: &str,
     amount_in_microcredits: u64,
     fee_in_microcredits: u64,
+    priority_fee_in_microcredits: u64,
     rng: &mut (impl Rng + CryptoRng),
-) -> Result<(Authorization<N>, Authorization<N>)> {
+) -> Result<(Authorization<N>, Option<Authorization<N>>)> {
     // Construct the program ID and function name.
     let (program_id, function_name) = ("credits.aleo", "transfer_private_to_public");
     // Construct the inputs.
@@ -183,8 +186,16 @@ fn authorize_transfer_private_to_public<N: Network>(
     // Get the execution ID.
     let execution_id = authorization.to_execution_id()?;
     // Authorize the fee.
-    let fee_authorization =
-        authorize_public_fee(private_key, fee_in_microcredits, 0, execution_id, rng)?;
+    let fee_authorization = match fee_in_microcredits.is_zero() {
+        true => None,
+        false => Some(authorize_public_fee(
+            private_key,
+            fee_in_microcredits,
+            priority_fee_in_microcredits,
+            execution_id,
+            rng,
+        )?),
+    };
 
     // Return the authorizations.
     Ok((authorization, fee_authorization))
@@ -320,7 +331,7 @@ mod test {
     type CurrentNetwork = Testnet3;
 
     #[test]
-    fn test_authorize_public() {
+    fn test_authorize_transfer_public() {
         // Initialize an RNG.
         let rng = &mut TestRng::default();
         // Initialize a VM.
@@ -347,6 +358,48 @@ mod test {
             &recipient_address.to_string(),
             100,
             10,
+            1,
+            rng,
+        )
+        .unwrap();
+
+        // Execute the authorization.
+        assert!(vm
+            .execute_authorization(authorization, fee_authorization, None, rng)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_authorize_transfer_private_to_public() {
+        // Initialize an RNG.
+        let rng = &mut TestRng::default();
+        // Initialize a VM.
+        let vm = VM::<CurrentNetwork, ConsensusMemory<CurrentNetwork>>::from(
+            ConsensusStore::open(None).unwrap(),
+        )
+        .unwrap();
+        // Initialize the genesis private key.
+        let genesis_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Create the genesis block.
+        let genesis_block = vm.genesis_beacon(&genesis_private_key, rng).unwrap();
+        // Add the genesis block to the VM.
+        vm.add_next_block(&genesis_block).unwrap();
+
+        // Initialize a private key for the sender.
+        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Initialize a private key for the recipient.
+        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
+
+        // Initialize an authorization.
+        let (authorization, fee_authorization) = authorize_transfer_private_to_public(
+            &sender_private_key,
+            1000,
+            "nonce",
+            &recipient_address.to_string(),
+            100,
+            10,
+            1,
             rng,
         )
         .unwrap();
