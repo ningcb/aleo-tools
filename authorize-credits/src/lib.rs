@@ -6,23 +6,24 @@ use snarkvm::console::{
 };
 use snarkvm::prelude::{
     Argument, Authorization, Entry, Field, Future, Group, Identifier, Owner, Plaintext, ProgramID,
-    Record, Register, Request, Response, Transition, ValueType, Zero,
+    Record, Register, Request, Response, Transition, ValueType,
 };
+
+use credits::get_base_fee_in_microcredits;
 
 use anyhow::Result;
 use core::str::FromStr;
+use indexmap::IndexMap;
 use rand::{CryptoRng, Rng};
-use snarkvm::circuit::prelude::IndexMap;
 
 /// Authorizes a public transfer.
 pub fn authorize_transfer_public<N: Network>(
     private_key: &str,
     recipient: &str,
     amount_in_microcredits: u64,
-    fee_in_microcredits: u64,
     priority_fee_in_microcredits: u64,
     rng: &mut (impl Rng + CryptoRng),
-) -> Result<(Authorization<N>, Option<Authorization<N>>)> {
+) -> Result<(Authorization<N>, Authorization<N>)> {
     // Initialize the private key.
     let private_key = PrivateKey::<N>::from_str(private_key)?;
     // Initialize the recipient.
@@ -75,16 +76,13 @@ pub fn authorize_transfer_public<N: Network>(
     // Get the execution ID.
     let execution_id = authorization.to_execution_id()?;
     // Authorize the fee.
-    let fee_authorization = match fee_in_microcredits.is_zero() {
-        true => None,
-        false => Some(authorize_public_fee(
-            &private_key,
-            fee_in_microcredits,
-            priority_fee_in_microcredits,
-            execution_id,
-            rng,
-        )?),
-    };
+    let fee_authorization = authorize_public_fee(
+        &private_key,
+        get_base_fee_in_microcredits("credits.aleo", "transfer_public")?,
+        priority_fee_in_microcredits,
+        execution_id,
+        rng,
+    )?;
 
     // Return the authorizations.
     Ok((authorization, fee_authorization))
@@ -98,10 +96,9 @@ pub fn authorize_transfer_private_to_public<N: Network>(
     record_nonce: &str,
     recipient: &str,
     amount_in_microcredits: u64,
-    fee_in_microcredits: u64,
     priority_fee_in_microcredits: u64,
     rng: &mut (impl Rng + CryptoRng),
-) -> Result<(Authorization<N>, Option<Authorization<N>>)> {
+) -> Result<(Authorization<N>, Authorization<N>)> {
     // Construct the program ID and function name.
     let (program_id, function_name) = ("credits.aleo", "transfer_private_to_public");
     // Construct the inputs.
@@ -189,16 +186,13 @@ pub fn authorize_transfer_private_to_public<N: Network>(
     let execution_id = authorization.to_execution_id()?;
 
     // Authorize the fee.
-    let fee_authorization = match fee_in_microcredits.is_zero() {
-        true => None,
-        false => Some(authorize_public_fee(
-            private_key,
-            fee_in_microcredits,
-            priority_fee_in_microcredits,
-            execution_id,
-            rng,
-        )?),
-    };
+    let fee_authorization = authorize_public_fee(
+        private_key,
+        300000, // TODO (@d0cd): Compute a better approximation for the fee.
+        priority_fee_in_microcredits,
+        execution_id,
+        rng,
+    )?;
 
     // Return the authorizations.
     Ok((authorization, fee_authorization))
@@ -361,14 +355,13 @@ mod test {
             &recipient_address.to_string(),
             100,
             10,
-            1,
             rng,
         )
         .unwrap();
 
         // Execute the authorization.
         assert!(vm
-            .execute_authorization(authorization, fee_authorization, None, rng)
+            .execute_authorization(authorization, Some(fee_authorization), None, rng)
             .is_ok());
     }
 
@@ -417,14 +410,13 @@ mod test {
             &recipient_address.to_string(),
             100,
             10,
-            1,
             rng,
         )
         .unwrap();
 
         // Execute the authorization.
         assert!(vm
-            .execute_authorization(authorization, fee_authorization, None, rng)
+            .execute_authorization(authorization, Some(fee_authorization), None, rng)
             .is_ok());
     }
 }
