@@ -156,3 +156,7 @@ Cargo.lock
 
 # End of https://www.toptal.com/developers/gitignore/api/git,rust,intellij+all,macos
 
+# Misc #
+logs
+*.ledger*
+
