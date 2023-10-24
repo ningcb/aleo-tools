@@ -91,7 +91,7 @@ pub fn authorize_transfer_public<N: Network>(
 /// Authorizes a private to public transfer.
 #[allow(clippy::too_many_arguments)]
 pub fn authorize_transfer_private_to_public<N: Network>(
-    private_key: &PrivateKey<N>,
+    private_key: &str,
     record_microcredits: u64,
     record_nonce: &str,
     recipient: &str,
@@ -99,6 +99,13 @@ pub fn authorize_transfer_private_to_public<N: Network>(
     priority_fee_in_microcredits: u64,
     rng: &mut (impl Rng + CryptoRng),
 ) -> Result<(Authorization<N>, Authorization<N>)> {
+    // Initialize the private key.
+    let private_key = PrivateKey::<N>::from_str(private_key)?;
+    // Initialize the recipient.
+    let recipient = Address::<N>::from_str(recipient)?;
+    // Initialize the amount in microcredits.
+    let amount_in_microcredits = U64::<N>::new(amount_in_microcredits);
+
     // Construct the program ID and function name.
     let (program_id, function_name) = ("credits.aleo", "transfer_private_to_public");
     // Construct the inputs.
@@ -113,8 +120,8 @@ pub fn authorize_transfer_private_to_public<N: Network>(
             )]),
             Group::from_str(record_nonce)?,
         )?),
-        Value::from(Literal::Address(Address::from_str(recipient)?)),
-        Value::from(Literal::U64(U64::new(amount_in_microcredits))),
+        Value::from(Literal::Address(recipient)),
+        Value::from(Literal::U64(amount_in_microcredits)),
     ];
     // Construct the input types.
     let input_types = vec![
@@ -125,7 +132,7 @@ pub fn authorize_transfer_private_to_public<N: Network>(
 
     // Construct the request.
     let request = request(
-        private_key,
+        &private_key,
         program_id,
         function_name,
         inputs,
@@ -142,7 +149,7 @@ pub fn authorize_transfer_private_to_public<N: Network>(
             IndexMap::from([(
                 Identifier::from_str("microcredits")?,
                 Entry::Private(Plaintext::from(Literal::U64(U64::new(
-                    record_microcredits - amount_in_microcredits,
+                    record_microcredits - *amount_in_microcredits,
                 )))),
             )]),
             {
@@ -158,12 +165,8 @@ pub fn authorize_transfer_private_to_public<N: Network>(
             ProgramID::from_str(program_id)?,
             Identifier::from_str(function_name)?,
             vec![
-                Argument::Plaintext(Plaintext::from(Literal::Address(Address::from_str(
-                    recipient,
-                )?))),
-                Argument::Plaintext(Plaintext::from(Literal::U64(U64::new(
-                    amount_in_microcredits,
-                )))),
+                Argument::Plaintext(Plaintext::from(Literal::Address(recipient))),
+                Argument::Plaintext(Plaintext::from(Literal::U64(amount_in_microcredits))),
             ],
         )),
     ];
@@ -187,7 +190,7 @@ pub fn authorize_transfer_private_to_public<N: Network>(
 
     // Authorize the fee.
     let fee_authorization = authorize_public_fee(
-        private_key,
+        &private_key,
         300000, // TODO (@d0cd): Compute a better approximation for the fee.
         priority_fee_in_microcredits,
         execution_id,
@@ -319,14 +322,24 @@ fn authorize<N: Network>(
 #[cfg(test)]
 mod test {
     use super::*;
-
     use snarkvm::ledger::store::ConsensusStore;
+    use snarkvm::prelude::block::{Block, Header, Metadata, Transaction};
     use snarkvm::prelude::store::helpers::memory::ConsensusMemory;
-    use snarkvm::prelude::{Testnet3, ViewKey, VM};
+    use snarkvm::prelude::store::ConsensusStorage;
+    use snarkvm::prelude::{Literal, Testnet3, ViewKey, Zero, VM};
+    use snarkvm::synthesizer::program::FinalizeGlobalState;
     use snarkvm::utilities::TestRng;
+
+    use std::borrow::Borrow;
 
     type CurrentNetwork = Testnet3;
 
+    // This tests that `authorize_transfer_public` produces a valid authorization, which can be executed and accepted by the VM.
+    // The test is split into the following steps:
+    //   1. Initialize a VM with a `genesis_private_key`.
+    //   2. Transfer public credits to the `sender` from the `genesis` account.
+    //   3. Authorize a `transfer_public` from the `sender` to the `recipient`.
+    //   4. Execute the authorization and check that the transaction is accepted by the VM.
     #[test]
     fn test_authorize_transfer_public() {
         // Initialize an RNG.
@@ -338,16 +351,63 @@ mod test {
         .unwrap();
         // Initialize the genesis private key.
         let genesis_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Initialize a private key for the sender.
+        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let sender_address = Address::try_from(&sender_private_key).unwrap();
+        // Initialize a private key for the recipient.
+        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
+
         // Create the genesis block.
         let genesis_block = vm.genesis_beacon(&genesis_private_key, rng).unwrap();
         // Add the genesis block to the VM.
         vm.add_next_block(&genesis_block).unwrap();
 
-        // Initialize a private key for the sender.
-        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
-        // Initialize a private key for the recipient.
-        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
-        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
+        // Get two valid records, the first is transferred to the sender, the second is transferred to the recipient.
+        let mut records = genesis_block.records();
+        let (_, record) = records.next().unwrap();
+        let first_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+        let (_, record) = records.next().unwrap();
+        let second_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+
+        // Get the number of microcredits in the record and record nonce.
+        let record_microcredits = match first_record
+            .data()
+            .get(&Identifier::from_str("microcredits").unwrap())
+            .unwrap()
+        {
+            Entry::Private(Plaintext::Literal(Literal::U64(amount), _)) => *amount,
+            _ => panic!("Invalid amount"),
+        };
+
+        // Transfer the first record to the sender, publicly.
+        let inputs = vec![
+            Value::Record(first_record),
+            Value::from(Literal::Address(sender_address)),
+            Value::from(Literal::U64(U64::new(*record_microcredits))),
+        ];
+        let transaction = vm
+            .execute(
+                &genesis_private_key,
+                ("credits.aleo", "transfer_private_to_public"),
+                inputs.iter(),
+                Some(second_record),
+                0u64,
+                None,
+                rng,
+            )
+            .unwrap();
+
+        // Construct the next block.
+        let next_block =
+            construct_next_block(&vm, &genesis_private_key, &[transaction], rng).unwrap();
+
+        // Add the next block to the VM.
+        vm.add_next_block(&next_block).unwrap();
 
         // Initialize an authorization.
         let (authorization, fee_authorization) = authorize_transfer_public(
@@ -359,12 +419,24 @@ mod test {
         )
         .unwrap();
 
-        // Execute the authorization.
-        assert!(vm
+        // Execute the authorization, producing a transaction.
+        let transaction = vm
             .execute_authorization(authorization, Some(fee_authorization), None, rng)
-            .is_ok());
+            .unwrap();
+
+        // Construct the next block.
+        let next_block =
+            construct_next_block(&vm, &sender_private_key, &[transaction], rng).unwrap();
+
+        assert!(vm.add_next_block(&next_block).is_ok())
     }
 
+    // This tests that `authorize_transfer_private_to_public` produces a valid authorization, which can be executed and accepted by the VM.
+    // The test is split into the following steps:
+    //   1. Initialize a VM with a `genesis_private_key`.
+    //   2. Transfer private credits to the `sender` from the `genesis` account.
+    //   3. Authorize a `transfer_private_to_public` from the `sender` to the `recipient`.
+    //   4. Execute the authorization and check that the transaction is accepted by the VM.
     #[test]
     fn test_authorize_transfer_private_to_public() {
         // Initialize an RNG.
@@ -376,15 +448,170 @@ mod test {
         .unwrap();
         // Initialize the genesis private key.
         let genesis_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        // Initialize a private key for the sender.
+        let sender_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let sender_address = Address::try_from(&sender_private_key).unwrap();
+        // Initialize a private key for the recipient.
+        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
+        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
+
         // Create the genesis block.
         let genesis_block = vm.genesis_beacon(&genesis_private_key, rng).unwrap();
         // Add the genesis block to the VM.
         vm.add_next_block(&genesis_block).unwrap();
 
-        // Get a valid record.
-        let (_, record) = genesis_block.records().next().unwrap();
-        let record = record
+        // Get two valid records, the first is transferred to the sender, the second is transferred to the recipient.
+        let mut records = genesis_block.records();
+        let (_, record) = records.next().unwrap();
+        let first_record = record
             .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+        let (_, record) = records.next().unwrap();
+        let second_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+
+        // Split the both records into two records each.
+        let first_transaction = vm
+            .execute(
+                &genesis_private_key,
+                ("credits.aleo", "split"),
+                vec![
+                    Value::Record(first_record.clone()),
+                    Value::Plaintext(Plaintext::from(Literal::U64(U64::new(1000000)))),
+                ]
+                .iter(),
+                None,
+                0u64,
+                None,
+                rng,
+            )
+            .unwrap();
+        let second_transaction = vm
+            .execute(
+                &genesis_private_key,
+                ("credits.aleo", "split"),
+                vec![
+                    Value::Record(second_record.clone()),
+                    Value::Plaintext(Plaintext::from(Literal::U64(U64::new(1000000)))),
+                ]
+                .iter(),
+                None,
+                0u64,
+                None,
+                rng,
+            )
+            .unwrap();
+
+        // Construct the next block.
+        let next_block = construct_next_block(
+            &vm,
+            &genesis_private_key,
+            &[first_transaction, second_transaction],
+            rng,
+        )
+        .unwrap();
+
+        // Add the next block to the VM.
+        vm.add_next_block(&next_block).unwrap();
+
+        // Get the records from the block.
+        let mut records = next_block.records();
+
+        // Privately send the first record to the sender, using the second record as the fee.
+        let (_, record) = records.next().unwrap();
+        let first_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+        let (_, record) = records.next().unwrap();
+        let second_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+
+        // Get the number of microcredits in the record.
+        let record_microcredits = match first_record
+            .data()
+            .get(&Identifier::from_str("microcredits").unwrap())
+            .unwrap()
+        {
+            Entry::Private(Plaintext::Literal(Literal::U64(amount), _)) => *amount,
+            _ => panic!("Invalid amount"),
+        };
+
+        // Transfer the first record to the sender, privately.
+        let inputs = vec![
+            Value::Record(first_record),
+            Value::from(Literal::Address(sender_address)),
+            Value::from(Literal::U64(record_microcredits)),
+        ];
+        let first_transaction = vm
+            .execute(
+                &genesis_private_key,
+                ("credits.aleo", "transfer_private"),
+                inputs.iter(),
+                Some(second_record),
+                0u64,
+                None,
+                rng,
+            )
+            .unwrap();
+
+        // Publicly send the third record to the sender, using the fourth record as the fee.
+        let (_, record) = records.next().unwrap();
+        let third_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+        let (_, record) = records.next().unwrap();
+        let fourth_record = record
+            .decrypt(&ViewKey::try_from(&genesis_private_key).unwrap())
+            .unwrap();
+
+        // Get the number of microcredits in the record.
+        let record_microcredits = match third_record
+            .data()
+            .get(&Identifier::from_str("microcredits").unwrap())
+            .unwrap()
+        {
+            Entry::Private(Plaintext::Literal(Literal::U64(amount), _)) => *amount,
+            _ => panic!("Invalid amount"),
+        };
+
+        // Transfer the third record to the sender, publicly.
+        let inputs = vec![
+            Value::Record(third_record),
+            Value::from(Literal::Address(sender_address)),
+            Value::from(Literal::U64(record_microcredits)),
+        ];
+        let second_transaction = vm
+            .execute(
+                &genesis_private_key,
+                ("credits.aleo", "transfer_private_to_public"),
+                inputs.iter(),
+                Some(fourth_record),
+                0u64,
+                None,
+                rng,
+            )
+            .unwrap();
+
+        // Construct the next block.
+        let next_block = construct_next_block(
+            &vm,
+            &genesis_private_key,
+            &[first_transaction, second_transaction],
+            rng,
+        )
+        .unwrap();
+
+        // Add the next block to the VM.
+        vm.add_next_block(&next_block).unwrap();
+
+        // Get the record sent to the sender.
+        // Note that this is the first output record of the transaction.
+        let mut records = next_block.records();
+        let (_, record) = records.next().unwrap();
+        let record = record
+            .decrypt(&ViewKey::try_from(&sender_private_key).unwrap())
             .unwrap();
 
         // Get the number of microcredits in the record and record nonce.
@@ -398,13 +625,9 @@ mod test {
         };
         let record_nonce = record.nonce();
 
-        // Initialize a private key for the recipient.
-        let recipient_private_key = PrivateKey::<CurrentNetwork>::new(rng).unwrap();
-        let recipient_address = Address::try_from(&recipient_private_key).unwrap();
-
         // Initialize an authorization.
         let (authorization, fee_authorization) = authorize_transfer_private_to_public(
-            &genesis_private_key,
+            &sender_private_key.to_string(),
             **record_microcredits,
             &record_nonce.to_string(),
             &recipient_address.to_string(),
@@ -414,9 +637,119 @@ mod test {
         )
         .unwrap();
 
-        // Execute the authorization.
-        assert!(vm
+        // Execute the authorization, producing a transaction.
+        let transaction = vm
             .execute_authorization(authorization, Some(fee_authorization), None, rng)
-            .is_ok());
+            .unwrap();
+
+        // Construct the next block.
+        let next_block =
+            construct_next_block(&vm, &sender_private_key, &[transaction], rng).unwrap();
+
+        assert!(vm.add_next_block(&next_block).is_ok())
+    }
+
+    // A helper function to construct the next block.
+    fn construct_next_block<C: ConsensusStorage<CurrentNetwork>, R: Rng + CryptoRng>(
+        vm: &VM<CurrentNetwork, C>,
+        private_key: &PrivateKey<CurrentNetwork>,
+        transactions: &[Transaction<CurrentNetwork>],
+        rng: &mut R,
+    ) -> Result<Block<CurrentNetwork>> {
+        // Speculate on the ratifications, solutions, and transaction.
+        let (ratifications, transactions, aborted_transaction_ids, ratified_finalize_operations) =
+            vm.speculate(
+                construct_finalize_global_state(vm),
+                Some(0u64),
+                vec![],
+                None,
+                transactions.iter(),
+            )?;
+        // Check that the number of aborted transactions is zero.
+        assert!(aborted_transaction_ids.is_empty());
+        // Get the most recent block.
+        let block_hash = vm
+            .block_store()
+            .get_block_hash(*vm.block_store().heights().max().unwrap().borrow())
+            .unwrap()
+            .unwrap();
+        let previous_block = vm.block_store().get_block(&block_hash).unwrap().unwrap();
+
+        // Construct the metadata associated with the block.
+        let metadata = Metadata::new(
+            CurrentNetwork::ID,
+            previous_block.round() + 1,
+            previous_block.height() + 1,
+            0,
+            0,
+            CurrentNetwork::GENESIS_COINBASE_TARGET,
+            CurrentNetwork::GENESIS_PROOF_TARGET,
+            previous_block.last_coinbase_target(),
+            previous_block.last_coinbase_timestamp(),
+            CurrentNetwork::GENESIS_TIMESTAMP + 1,
+        )?;
+        // Construct the block header.
+        let header = Header::from(
+            vm.block_store().current_state_root(),
+            transactions.to_transactions_root().unwrap(),
+            transactions
+                .to_finalize_root(ratified_finalize_operations)
+                .unwrap(),
+            ratifications.to_ratifications_root().unwrap(),
+            Field::zero(),
+            Field::zero(),
+            metadata,
+        )?;
+
+        // Construct the new block.
+        Block::new_beacon(
+            private_key,
+            previous_block.hash(),
+            header,
+            ratifications,
+            None,
+            transactions,
+            aborted_transaction_ids,
+            rng,
+        )
+    }
+
+    // A helper function to construct `FinalizeGlobalState` from the current `VM` state.
+    fn construct_finalize_global_state<C: ConsensusStorage<CurrentNetwork>>(
+        vm: &VM<CurrentNetwork, C>,
+    ) -> FinalizeGlobalState {
+        // Retrieve the latest block.
+        let block_height = *vm.block_store().heights().max().unwrap().clone();
+        let latest_block_hash = vm
+            .block_store()
+            .get_block_hash(block_height)
+            .unwrap()
+            .unwrap();
+        let latest_block = vm
+            .block_store()
+            .get_block(&latest_block_hash)
+            .unwrap()
+            .unwrap();
+        // Retrieve the latest round.
+        let latest_round = latest_block.round();
+        // Retrieve the latest height.
+        let latest_height = latest_block.height();
+        // Retrieve the latest cumulative weight.
+        let latest_cumulative_weight = latest_block.cumulative_weight();
+
+        // Compute the next round number./
+        let next_round = latest_round.saturating_add(1);
+        // Compute the next height.
+        let next_height = latest_height.saturating_add(1);
+
+        // Construct the finalize state.
+        FinalizeGlobalState::new::<CurrentNetwork>(
+            next_round,
+            next_height,
+            latest_cumulative_weight,
+            0u128,
+            latest_block.hash(),
+        )
+        .unwrap()
     }
 }
