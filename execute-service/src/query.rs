@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use snarkvm::ledger::query::QueryTrait;
 use snarkvm::prelude::Field;
 
+#[derive(Clone, Debug)]
 pub struct StaticQuery<N: Network> {
     state_root: Option<N::StateRoot>,
     state_path: Option<StatePath<N>>,

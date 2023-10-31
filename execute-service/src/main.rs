@@ -1,11 +1,22 @@
+mod execute;
+use execute::*;
+
 pub mod query;
 pub use query::*;
 
-use snarkvm::prelude::{Deserialize, Network, Serialize, StatePath, Testnet3};
+pub mod request;
+pub use request::*;
+
+use snarkvm::circuit::{Aleo, AleoV0};
+use snarkvm::ledger::block::Transaction;
+use snarkvm::prelude::{
+    Authorization, Deserialize, Locator, Network, Process, Serialize, StatePath, Testnet3,
+};
 
 use anyhow::{anyhow, Result};
 
-type CurrentNetwork = Testnet3;
+pub type CurrentNetwork = Testnet3;
+pub type CurrentAleo = AleoV0;
 
 fn main() {
     println!("Hello, world!");
