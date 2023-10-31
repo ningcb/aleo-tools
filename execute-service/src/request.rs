@@ -4,16 +4,17 @@ use snarkvm::prelude::{FromBytes, ToBytes};
 use tokio::sync::oneshot;
 use warp::{Rejection, Reply};
 
-struct ExecutionRequest {
-    function_authorization: Vec<u8>,
-    fee_authorization: Vec<u8>,
-    state_root: Vec<u8>,
-    state_path: Vec<u8>,
+#[derive(Deserialize, Serialize)]
+pub struct ExecutionRequest {
+    pub function_authorization: Vec<u8>,
+    pub fee_authorization: Vec<u8>,
+    pub state_root: Vec<u8>,
+    pub state_path: Vec<u8>,
 }
 
 #[derive(Deserialize, Serialize)]
-struct ExecutionResponse {
-    transaction: Vec<u8>,
+pub struct ExecutionResponse {
+    pub transaction: Vec<u8>,
 }
 
 fn deserialize_request(
@@ -48,7 +49,7 @@ fn serialize_response(transaction: Transaction<CurrentNetwork>) -> Result<Execut
     Ok(ExecutionResponse { transaction })
 }
 
-async fn handle_request(request: ExecutionRequest) -> Result<impl Reply, Rejection> {
+pub async fn handle_request(request: ExecutionRequest) -> Result<impl Reply, Rejection> {
     let (function_authorization, fee_authorization, query) = match deserialize_request(request) {
         Ok(result) => result,
         Err(_) => return Err(warp::reject()),
