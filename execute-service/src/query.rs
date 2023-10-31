@@ -7,8 +7,8 @@ use snarkvm::prelude::Field;
 
 #[derive(Clone, Debug)]
 pub struct StaticQuery<N: Network> {
-    state_root: Option<N::StateRoot>,
-    state_path: Option<StatePath<N>>,
+    pub state_root: Option<N::StateRoot>,
+    pub state_path: Option<StatePath<N>>,
 }
 
 #[async_trait(?Send)]

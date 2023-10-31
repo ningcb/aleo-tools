@@ -7,7 +7,7 @@ thread_local! {
     static PROCESS: RefCell<Process<CurrentNetwork>> = RefCell::new(Process::load().unwrap());
 }
 
-fn execute(
+pub fn execute(
     function_authorization: Authorization<CurrentNetwork>,
     fee_authorization: Authorization<CurrentNetwork>,
     query: StaticQuery<CurrentNetwork>,
