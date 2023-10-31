@@ -1,26 +1,6 @@
-mod authorize;
-use authorize::*;
+use authorize_service::*;
 
-mod keygen;
-use keygen::*;
-
-mod utils;
-use utils::*;
-
-use snarkvm::prelude::{Deserialize, Network, PrivateKey, Serialize, Testnet3};
-use std::str::FromStr;
-use warp::reject::Rejection;
-use warp::{Filter, Reply};
-
-type CurrentNetwork = Testnet3;
-
-#[derive(Deserialize, Serialize)]
-struct AuthorizeRequest {
-    private_key: String,
-    recipient: String,
-    amount_in_microcredits: u64,
-    priority_fee_in_microcredits: u64,
-}
+use warp::Filter;
 
 #[tokio::main]
 async fn main() {
