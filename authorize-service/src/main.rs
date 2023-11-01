@@ -1,40 +1,26 @@
 use authorize_service::*;
 
+use structopt::StructOpt;
 use warp::Filter;
 
-#[tokio::main]
-async fn main() {
+#[derive(StructOpt, Debug)]
+struct Opt {
+    #[structopt(short, long, default_value = "3030")]
+    port: u16,
+}
+
+async fn run(port: u16) {
     pretty_env_logger::init();
 
-    // GET /keygen
-    let keygen = warp::get()
-        .and(warp::path("keygen"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and_then(|seed: String| async move {
-            let private_key = private_key_from_seed::<CurrentNetwork>(&seed);
-            convert_to_response(private_key)
-        });
-
-    // POST /authorize
-    let authorize = warp::post()
-        .and(warp::path("authorize"))
-        .and(warp::path::end())
-        .and(warp::body::content_length_limit(1024)) // 1 kilobyte
-        .and(warp::body::json())
-        .and_then(|request: AuthorizeRequest| async move {
-            let authorization = authorize_transfer_public::<CurrentNetwork>(
-                &request.private_key,
-                &request.recipient,
-                request.amount_in_microcredits,
-                request.priority_fee_in_microcredits,
-            );
-            convert_to_response(authorization)
-        });
-
-    let routes = keygen.or(authorize).with(warp::trace(
+    let routes = keygen().or(authorize()).with(warp::trace(
         |info| tracing::debug_span!("Debugging headers", headers = ?info.request_headers()),
     ));
 
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
+}
+
+#[tokio::main]
+async fn main() {
+    let opt = Opt::from_args();
+    run(opt.port).await;
 }
