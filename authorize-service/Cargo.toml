@@ -31,6 +31,9 @@ version = "1.0.190"
 [dependencies.snarkvm]
 version = "0.16.6"
 
+[dependencies.structopt]
+version = "0.3.26"
+
 [dependencies.tokio]
 version = "1.33.0"
 features = [ "full" ]

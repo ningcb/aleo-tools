@@ -11,18 +11,22 @@ use snarkvm::prelude::{
 };
 
 pub fn authorize_transfer_public<N: Network>(
-    private_key: &str,
-    recipient: &str,
-    amount_in_microcredits: u64,
-    priority_fee_in_microcredits: u64,
-) -> Result<(Authorization<N>, Authorization<N>)> {
+    request: AuthorizeRequest<N>,
+) -> Result<AuthorizeResponse<N>> {
+    // Initialize the RNG.
     let rng = &mut rand::thread_rng();
-    // Initialize the private key.
-    let private_key = PrivateKey::<N>::from_str(private_key)?;
-    // Initialize the recipient.
-    let recipient = Address::<N>::from_str(recipient)?;
-    // Initialize the amount in microcredits.
-    let amount_in_microcredits = U64::<N>::new(amount_in_microcredits);
+
+    // Get the private key.
+    let private_key = request.private_key;
+    // Get the recipient.
+    let recipient = request.recipient;
+    // Get the amount in microcredits.
+    let amount_in_microcredits = request.amount_in_microcredits;
+    // Get the fee in microcredits.
+    // TODO (@d0cd) Use table from `credits` crate once it is up to date with snarkVM.
+    let fee_in_microcredits = U64::new(263388);
+    // Get the priority fee in microcredits.
+    let priority_fee_in_microcredits = request.priority_fee_in_microcredits;
 
     // Construct the program ID and function name.
     let (program_id, function_name) = ("credits.aleo", "transfer_public");
@@ -65,16 +69,13 @@ pub fn authorize_transfer_public<N: Network>(
     let output_registers = vec![Some(Register::from_str("r2")?)];
 
     // Construct the authorization.
-    let (execution_id, authorization) =
+    let (execution_id, function_authorization) =
         authorize(request, outputs, output_types, output_registers)?;
 
     // Construct the inputs.
-    let fee_in_microcredits = 263388; // TODO (@d0cd) Use table from `credits` crate once it is up to date with snarkVM.
     let inputs = vec![
-        Value::Plaintext(Plaintext::from(Literal::U64(U64::new(fee_in_microcredits)))),
-        Value::Plaintext(Plaintext::from(Literal::U64(U64::new(
-            priority_fee_in_microcredits,
-        )))),
+        Value::Plaintext(Plaintext::from(Literal::U64(fee_in_microcredits))),
+        Value::Plaintext(Plaintext::from(Literal::U64(priority_fee_in_microcredits))),
         Value::Plaintext(Plaintext::from(Literal::Field(execution_id))),
     ];
     // Construct the input types.
@@ -102,9 +103,9 @@ pub fn authorize_transfer_public<N: Network>(
             Argument::Plaintext(Plaintext::from(Literal::Address(Address::try_from(
                 private_key,
             )?))),
-            Argument::Plaintext(Plaintext::from(Literal::U64(U64::new(
+            Argument::Plaintext(Plaintext::from(Literal::U64(
                 fee_in_microcredits + priority_fee_in_microcredits,
-            )))),
+            ))),
         ],
     ))];
     // Construct the output types.
@@ -114,8 +115,14 @@ pub fn authorize_transfer_public<N: Network>(
     // Construct the authorization.
     let (_, fee_authorization) = authorize(request, outputs, output_types, output_registers)?;
 
-    // Return the authorizations.
-    Ok((authorization, fee_authorization))
+    // Construct the response.
+    let response = AuthorizeResponse {
+        function_authorization,
+        fee_authorization,
+    };
+
+    // Return the response.
+    Ok(response)
 }
 
 // Constructs a request from the given inputs.
