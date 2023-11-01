@@ -12,7 +12,7 @@ struct Opt {
 async fn run(port: u16) {
     pretty_env_logger::init();
 
-    let routes = keygen().or(authorize()).with(warp::trace(
+    let routes = keygen_route().or(authorize_route()).with(warp::trace(
         |info| tracing::debug_span!("Debugging headers", headers = ?info.request_headers()),
     ));
 

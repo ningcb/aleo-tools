@@ -15,6 +15,5 @@ pub use routes::*;
 
 use snarkvm::prelude::{FromBytes, Network, PrivateKey, Testnet3, ToBytes};
 use std::str::FromStr;
-use warp::Reply;
 
 pub type CurrentNetwork = Testnet3;

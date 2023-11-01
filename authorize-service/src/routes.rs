@@ -1,10 +1,9 @@
 use super::*;
 
-use snarkvm::prelude::{FromBytes, ToBytes};
-use warp::{http::Response, hyper::body::Bytes, Filter, Rejection};
+use warp::{http::Response, hyper::body::Bytes, Filter, Rejection, Reply};
 
 // GET /keygen
-pub fn keygen() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+pub fn keygen_route() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::get()
         .and(warp::path("keygen"))
         .and(warp::path::param::<String>())
@@ -30,7 +29,7 @@ pub fn keygen() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone 
 }
 
 // POST /authorize
-pub fn authorize() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+pub fn authorize_route() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::post()
         .and(warp::path("authorize"))
         .and(warp::path::end())

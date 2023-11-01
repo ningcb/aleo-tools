@@ -11,22 +11,10 @@ pub struct AuthorizeRequest<N: Network> {
     pub priority_fee_in_microcredits: U64<N>,
 }
 
-impl<N: Network> ToBytes for AuthorizeRequest<N> {
-    fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()>
-    where
-        Self: Sized,
-    {
-        self.private_key.write_le(&mut writer)?;
-        self.recipient.write_le(&mut writer)?;
-        self.amount_in_microcredits.write_le(&mut writer)?;
-        self.priority_fee_in_microcredits.write_le(&mut writer)
-    }
-}
-
 impl<N: Network> FromBytes for AuthorizeRequest<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self>
-    where
-        Self: Sized,
+        where
+            Self: Sized,
     {
         let private_key = PrivateKey::read_le(&mut reader)?;
         let recipient = Address::read_le(&mut reader)?;
@@ -38,5 +26,17 @@ impl<N: Network> FromBytes for AuthorizeRequest<N> {
             amount_in_microcredits,
             priority_fee_in_microcredits,
         })
+    }
+}
+
+impl<N: Network> ToBytes for AuthorizeRequest<N> {
+    fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()>
+    where
+        Self: Sized,
+    {
+        self.private_key.write_le(&mut writer)?;
+        self.recipient.write_le(&mut writer)?;
+        self.amount_in_microcredits.write_le(&mut writer)?;
+        self.priority_fee_in_microcredits.write_le(&mut writer)
     }
 }
