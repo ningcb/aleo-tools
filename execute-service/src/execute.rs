@@ -8,13 +8,23 @@ thread_local! {
 }
 
 pub fn execute(
-    function_authorization: Authorization<CurrentNetwork>,
-    fee_authorization: Authorization<CurrentNetwork>,
-    query: StaticQuery<CurrentNetwork>,
+    execute_request: ExecuteRequest<CurrentNetwork>,
 ) -> Result<Transaction<CurrentNetwork>> {
     PROCESS.with(|process| {
         // Initialize an RNG.
         let rng = &mut rand::thread_rng();
+
+        // Get the function authorization.
+        let function_authorization = execute_request.function_authorization;
+        // Get the fee authorization.
+        let fee_authorization = execute_request.fee_authorization;
+        // Get the state root.
+        let state_root = execute_request.state_root;
+        // Get the state path.
+        let state_path = execute_request.state_path;
+
+        // Construct the query.
+        let query = StaticQuery::new(state_root, state_path);
 
         // Construct the locator of the main function.
         let locator = {

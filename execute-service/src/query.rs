@@ -11,6 +11,15 @@ pub struct StaticQuery<N: Network> {
     pub state_path: Option<StatePath<N>>,
 }
 
+impl<N: Network> StaticQuery<N> {
+    pub fn new(state_root: Option<N::StateRoot>, state_path: Option<StatePath<N>>) -> Self {
+        Self {
+            state_root,
+            state_path,
+        }
+    }
+}
+
 #[async_trait(?Send)]
 impl<N: Network> QueryTrait<N> for StaticQuery<N> {
     fn current_state_root(&self) -> Result<N::StateRoot> {

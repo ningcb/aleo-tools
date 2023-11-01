@@ -1,39 +1,26 @@
-mod execute;
-use execute::*;
+use execute_service::*;
 
-pub mod query;
-pub use query::*;
-
-pub mod request;
-pub use request::*;
-
-use snarkvm::circuit::AleoV0;
-use snarkvm::ledger::block::Transaction;
-use snarkvm::prelude::{
-    Authorization, Deserialize, Locator, Network, Process, Serialize, StatePath, Testnet3,
-};
-
-use anyhow::{anyhow, Result};
+use structopt::StructOpt;
 use warp::Filter;
 
-pub type CurrentNetwork = Testnet3;
-pub type CurrentAleo = AleoV0;
+#[derive(StructOpt, Debug)]
+struct Opt {
+    #[structopt(short, long, default_value = "3031")]
+    port: u16,
+}
 
-#[tokio::main]
-async fn main() {
+async fn run(port: u16) {
     pretty_env_logger::init();
 
-    // POST /execute
-    let authorize = warp::post()
-        .and(warp::path("execute"))
-        .and(warp::path::end())
-        .and(warp::body::content_length_limit(32 * 1024)) // 32 kilobytes TODO (@d0cd): Check
-        .and(warp::body::json())
-        .and_then(|request: ExecutionRequest| async move { handle_request(request).await });
-
-    let routes = authorize.with(warp::trace(
+    let routes = execute_route().with(warp::trace(
         |info| tracing::debug_span!("Debugging headers", headers = ?info.request_headers()),
     ));
 
-    warp::serve(routes).run(([127, 0, 0, 1], 3031)).await;
+    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
+}
+
+#[tokio::main]
+async fn main() {
+    let opt = Opt::from_args();
+    run(opt.port).await;
 }

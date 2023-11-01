@@ -1,73 +1,63 @@
 use super::*;
 
-use snarkvm::prelude::{FromBytes, ToBytes};
-use tokio::sync::oneshot;
-use warp::{Rejection, Reply};
+use snarkvm::prelude::{error, IoResult};
+use std::io::{Read, Write};
 
-#[derive(Deserialize, Serialize)]
-pub struct ExecutionRequest {
-    pub function_authorization: Vec<u8>,
-    pub fee_authorization: Vec<u8>,
-    pub state_root: Vec<u8>,
-    pub state_path: Vec<u8>,
+#[derive(Clone, Debug)]
+pub struct ExecuteRequest<N: Network> {
+    pub function_authorization: Authorization<N>,
+    pub fee_authorization: Authorization<N>,
+    pub state_root: Option<N::StateRoot>,
+    pub state_path: Option<StatePath<N>>,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct ExecutionResponse {
-    pub transaction: Vec<u8>,
+impl<N: Network> FromBytes for ExecuteRequest<N> {
+    fn read_le<R: Read>(mut reader: R) -> IoResult<Self>
+    where
+        Self: Sized,
+    {
+        let function_authorization = Authorization::read_le(&mut reader)?;
+        let fee_authorization = Authorization::read_le(&mut reader)?;
+        let state_root = match u8::read_le(&mut reader)? {
+            0 => None,
+            1 => Some(N::StateRoot::read_le(&mut reader)?),
+            _ => return Err(error("Invalid state root flag")),
+        };
+        let state_path = match u8::read_le(&mut reader)? {
+            0 => None,
+            1 => Some(StatePath::read_le(&mut reader)?),
+            _ => return Err(error("Invalid state path flag")),
+        };
+        Ok(Self {
+            function_authorization,
+            fee_authorization,
+            state_root,
+            state_path,
+        })
+    }
 }
 
-fn deserialize_request(
-    request: ExecutionRequest,
-) -> Result<(
-    Authorization<CurrentNetwork>,
-    Authorization<CurrentNetwork>,
-    StaticQuery<CurrentNetwork>,
-)> {
-    let function_authorization = Authorization::from_bytes_le(&request.function_authorization)?;
-    let fee_authorization = Authorization::from_bytes_le(&request.fee_authorization)?;
-    let state_root = match &request.state_root.is_empty() {
-        true => None,
-        false => Some(<CurrentNetwork as Network>::StateRoot::from_bytes_le(
-            &request.state_root,
-        )?),
-    };
-    let state_path = match &request.state_path.is_empty() {
-        true => None,
-        false => Some(StatePath::from_bytes_le(&request.state_path)?),
-    };
-    let query = StaticQuery {
-        state_root,
-        state_path,
-    };
-
-    Ok((function_authorization, fee_authorization, query))
-}
-
-fn serialize_response(transaction: Transaction<CurrentNetwork>) -> Result<ExecutionResponse> {
-    let transaction = transaction.to_bytes_le()?;
-    Ok(ExecutionResponse { transaction })
-}
-
-pub async fn handle_request(request: ExecutionRequest) -> Result<impl Reply, Rejection> {
-    let (function_authorization, fee_authorization, query) = match deserialize_request(request) {
-        Ok(result) => result,
-        Err(_) => return Err(warp::reject()),
-    };
-
-    let (tx, rx) = oneshot::channel();
-
-    rayon::spawn(move || {
-        let _result = tx.send(execute(function_authorization, fee_authorization, query));
-    });
-
-    let transaction = match rx.await {
-        Ok(Ok(transaction)) => transaction,
-        _ => return Err(warp::reject()),
-    };
-
-    match serialize_response(transaction) {
-        Ok(result) => Ok(warp::reply::json(&result)),
-        Err(_) => Err(warp::reject()),
+impl<N: Network> ToBytes for ExecuteRequest<N> {
+    fn write_le<W: Write>(&self, mut writer: W) -> IoResult<()>
+    where
+        Self: Sized,
+    {
+        self.function_authorization.write_le(&mut writer)?;
+        self.fee_authorization.write_le(&mut writer)?;
+        match &self.state_root {
+            None => 0u8.write_le(&mut writer)?,
+            Some(state_root) => {
+                1u8.write_le(&mut writer)?;
+                state_root.write_le(&mut writer)?
+            }
+        }
+        match &self.state_path {
+            None => 0u8.write_le(&mut writer)?,
+            Some(state_path) => {
+                1u8.write_le(&mut writer)?;
+                state_path.write_le(&mut writer)?
+            }
+        }
+        Ok(())
     }
 }
