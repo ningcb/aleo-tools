@@ -89,7 +89,7 @@ pub fn authorize_transfer_public<N: Network>(
     let request = sign_request(
         &private_key,
         program_id,
-        function_name,
+        "fee_public",
         inputs,
         input_types,
         rng,

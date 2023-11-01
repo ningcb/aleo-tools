@@ -13,8 +13,8 @@ pub struct AuthorizeRequest<N: Network> {
 
 impl<N: Network> FromBytes for AuthorizeRequest<N> {
     fn read_le<R: Read>(mut reader: R) -> IoResult<Self>
-        where
-            Self: Sized,
+    where
+        Self: Sized,
     {
         let private_key = PrivateKey::read_le(&mut reader)?;
         let recipient = Address::read_le(&mut reader)?;
